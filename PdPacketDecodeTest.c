@@ -37,40 +37,41 @@ enum k_code
     SYNC_3 = 0x06
 };
 
-#define ERROR5B4B 0xff
+#define ERROR5B4B 0x00
 const uint8_t symbol5b4b[] = {
-    ERROR5B4B,
-    ERROR5B4B,
-    ERROR5B4B,
-    ERROR5B4B,
-    ERROR5B4B,
-    ERROR5B4B,
-    SYNC_3,
-    RST_1,
-    ERROR5B4B,
-    0x01,
-    0x04,
-    0x05,
-    ERROR5B4B,
-    EOP,
-    0x06,
-    0x07,
-    ERROR5B4B,
-    SYNC_2,
-    0x08,
-    RST_2,
-    0x02,
-    0x03,
-    0x0a,
-    0x0b,
-    SYNC_1,
-    ERROR5B4B,
-    0x0c,
-    0x0d,
-    0x0e,
-    0x0f,
-    0x00,
-    ERROR5B4B};
+    ERROR5B4B, //00
+    ERROR5B4B, //01
+    ERROR5B4B, //02
+    ERROR5B4B, //03
+    ERROR5B4B, //04
+    ERROR5B4B, //05
+    SYNC_3,    //06
+    RST_1,     //07
+    ERROR5B4B, //08
+    0x01,      //09
+    0x04,      //0A
+    0x05,      //0B
+    ERROR5B4B, //0C
+    EOP,       //0D
+    0x06,      //0E
+    0x07,      //0F
+    ERROR5B4B, //10
+    SYNC_2,    //11
+    0x08,      //12
+    0x09,      //13
+    0x02,      //14
+    0x03,      //15
+    0x0a,      //16
+    0x0b,      //17
+    SYNC_1,    //18
+    RST_2,     //19
+    0x0c,      //1A
+    0x0d,      //1B
+    0x0e,      //1C
+    0x0f,      //1D
+    0x00,      //1E
+    ERROR5B4B  //1F
+};
 
 enum SOP_SET
 {
@@ -124,8 +125,13 @@ static void store_data(uint8_t d)
     static uint8_t soptemp[4];
     static uint8_t *msg;
 
-    if (d == EOP)
+    // printf("%02X", d);
+    // printf("%d", shift);
+
+    if (d == EOP) {
+        puts("EOP");
         return;
+    }
 
     if (count < 4)
     {
@@ -141,11 +147,11 @@ static void store_data(uint8_t d)
     {
         if (count % 2)
         {
-            *msg = symbol5b4b[d];
+            *msg++ |= (symbol5b4b[d] << 4); 
         }
         else
         {
-            *msg++ |= (symbol5b4b[d] << 4);
+            *msg = symbol5b4b[d];
         }
     }
     count++;
@@ -157,7 +163,6 @@ pd_recv(uint8_t d)
     static uint8_t od;
     static uint_fast8_t nibble;
     bool sop_detected = false;
-    uint8_t d5b;
 
     if (count == 0)
     {
@@ -182,12 +187,18 @@ pd_recv(uint8_t d)
             return;
     }
 
+    printf("d=%02x, od=%02x, shift=%d, 5b=%02x\n", d, od, shift, ((d << (8 - shift)) | (od >> shift)) & 0x1f);
     store_data(((d << (8 - shift)) | (od >> shift)) & 0x1f);
     shift = (shift + 5) % 8;
+    if (shift == 0)
+        shift = 8;
     if (shift < 4)
     {
+        printf("d=%02x, od=%02x, shift=%d, 5b=%02x\n", d, od, shift, (d >> shift) & 0x1f);
         store_data((d >> shift) & 0x1f);
         shift = (shift + 5) % 8;
+        if (shift == 0)
+            shift = 8;
     }
     od = d;
 }
@@ -199,6 +210,7 @@ int main(void)
 
     char *p = packet[0];
 
+    count = 0;
     for (size_t i = 0; i < strlen(p); i += 2)
     {
         int d;
@@ -207,6 +219,13 @@ int main(void)
         (void)sscanf(oct, "%x", &d);
         pd_recv((uint8_t)d);
     }
+
+    printf("SOP = %d\n", pd_packet.sop);
+    for (size_t i = 0; i < count / 2; i++)
+    {
+        printf("%02X", pd_packet.message[i]);
+    }
+    puts("");
 }
 
 // プログラムの実行: Ctrl + F5 または [デバッグ] > [デバッグなしで開始] メニュー

@@ -9,6 +9,48 @@
 #include <string.h>
 #include <stdlib.h>
 
+static uint32_t table[] = {
+ 0x00000000, 0x1db71064, 0x3b6e20c8, 0x26d930ac,
+ 0x76dc4190, 0x6b6b51f4, 0x4db26158, 0x5005713c,
+ 0xedb88320, 0xf00f9344, 0xd6d6a3e8, 0xcb61b38c,
+ 0x9b64c2b0, 0x86d3d2d4, 0xa00ae278, 0xbdbdf21c,
+};
+//static uint32_t table[] = {
+//    0x00000000, 0x4C11DB70, 0x9823B6E0, 0xD4326D90,
+//    0x34867077, 0x7897AB07, 0xACA5C697, 0xE0B41DE7,
+//    0x690CE0EE, 0x251D3B9E, 0xF12F560E, 0xBD3E8D7E,
+//    0x5D8A9099, 0x119B4BE9, 0xC5A92679, 0x89B8FD09
+//};
+
+uint32_t crc32_4bits(uint8_t* data, size_t len)
+{
+    uint32_t crc;
+    size_t i;
+
+    crc = 0xffffffff;
+
+    for (i = 0; i < len; i++) {
+        crc = table[(crc ^ data[i]) & 0xf] ^ (crc >> 4);
+        crc = table[(crc ^ (data[i] >> 4)) & 0xf] ^ (crc >> 4);
+    }
+
+    return crc ^ 0xffffffff;
+    // return crc;
+}
+
+uint32_t crcWrap(uint32_t c)
+{
+    uint32_t ret = 0;
+    uint32_t j, bit;
+    //c = ~c;
+    for (size_t i = 0; i < 32; i++) {
+        j = 31 - i;
+        bit = (c >> i) & 1;
+        ret |= bit << j;
+    }
+    return ret;
+}
+
 static struct pd_packet
 {
     uint_fast8_t sop;
@@ -125,10 +167,8 @@ static void store_data(uint8_t d)
     static uint8_t soptemp[4];
     static uint8_t *msg;
 
-    // printf("%02X", d);
-    // printf("%d", shift);
-
     if (d == EOP) {
+        printf(", d=%02x, count=%2d, crc=%08x ", symbol5b4b[d], count, pd_packet.crc);
         puts("EOP");
         return;
     }
@@ -145,15 +185,19 @@ static void store_data(uint8_t d)
     }
     else
     {
+        d = symbol5b4b[d];
+        pd_packet.crc = table[(pd_packet.crc ^ d) & 0xf] ^ (pd_packet.crc >> 4);
+        // pd_packet.crc = table[((pd_packet.crc >> (32 - 4)) ^ d) & 0xf] ^ (pd_packet.crc << 4);
         if (count % 2)
         {
-            *msg++ |= (symbol5b4b[d] << 4); 
+            *msg++ |= (d << 4);
         }
         else
         {
-            *msg = symbol5b4b[d];
+            *msg = d;
         }
     }
+    printf(", d=%02x, count=%2d, crc=%08x, invcrc=%08x\n", d, count, pd_packet.crc, ~pd_packet.crc);
     count++;
 }
 
@@ -161,13 +205,12 @@ static void
 pd_recv(uint8_t d)
 {
     static uint8_t od;
-    static uint_fast8_t nibble;
     bool sop_detected = false;
 
     if (count == 0)
     {
-        for (shift = 8; shift > 0; shift--)
-        {
+        shift = 8;
+        do {
             uint8_t tmp = (d << (8 - shift)) | (od >> shift);
             tmp &= 0x1f;
             if (tmp == SYNC_1)
@@ -182,19 +225,19 @@ pd_recv(uint8_t d)
                 sop_detected = true;
                 break;
             }
-        }
+        } while (--shift);
         if (!sop_detected)
             return;
     }
 
-    printf("d=%02x, od=%02x, shift=%d, 5b=%02x\n", d, od, shift, ((d << (8 - shift)) | (od >> shift)) & 0x1f);
+    printf("d=%02x, od=%02x, shift=%d, 5b=%02x", d, od, shift, ((d << (8 - shift)) | (od >> shift)) & 0x1f);
     store_data(((d << (8 - shift)) | (od >> shift)) & 0x1f);
     shift = (shift + 5) % 8;
     if (shift == 0)
         shift = 8;
     if (shift < 4)
     {
-        printf("d=%02x, od=%02x, shift=%d, 5b=%02x\n", d, od, shift, (d >> shift) & 0x1f);
+        printf("d=%02x, od=%02x, shift=%d, 5b=%02x", d, od, shift, (d >> shift) & 0x1f);
         store_data((d >> shift) & 0x1f);
         shift = (shift + 5) % 8;
         if (shift == 0)
@@ -206,7 +249,37 @@ pd_recv(uint8_t d)
 int main(void)
 {
     char *packet[] = {
-        "AAAAAAAAAAAAAAAA18E3985CA29AA699BCF452FB4DBDF7EED139A95C8D"};
+        "AAAAAAAAAAAAAAAA18E3986C5A9AA699FCF47CFB4DBDF7CE7A5DBDF7BA26EA9ED79226AAB7D4DDD9B735758D",
+        "AAAAAAAAAAAAAAAA18E39894F7F76A77AFB40D",
+        "AAAAAAAAAAAAAAAA18E348A54F9AA6ABE44B77F7CD937F8D",
+        "AAAAAAAAAAAAAAAA18E3985CF25DCA27AB550D",
+        "AAAAAAAAAAAAAAAA18E3586DF5DD696BFB5E8D",
+        "AAAAAAAAAAAAAAAA18E39814F56F6EBFAE530D",
+        "AAAAAAAAAAAAAAAA18E3E8ECF23DEDCEF9D40D",
+        "AAAAAAAAAAAAAAAA18E39894F2D44AEB76B78D",
+        "AAAAAAAAAAAAAAAA18E39826F5524ABDE5D30D",
+        "AAAAAAAAAAAAAAAA18E3985CF5D5CEE4AAB28D",
+        "AAAAAAAAAAAAAAAA18E3E8EFF38A4F2ADFAD0D",
+        "AAAAAAAAAAAAAAAA18E39894F35C4E2D77528D",
+        "AAAAAAAAAAAAAAAA18E348A7F2FCF15AF5F20D",
+        "AAAAAAAAAAAAAAAA18E398DCF26EEABBD6560D",
+        "AAAAAAAAAAAAAAAA18E3E8EFF4952BEFB5DE0D",
+        "AAAAAAAAAAAAAAAA18E39894F4532AEE9DB30D",
+        "AAAAAAAAAAAAAAAA18E3E8A493D47BEFBDF77DDFADE4E60D",
+        "AAAAAAAAAAAAAAAA18E398DCF3F6EE7D57B50D",
+        "AAAAAAAAAAAAAAAA18E3E8EFF55D2FC735AD8D",
+        "AAAAAAAAAAAAAAAA18E39894F5CB2EC99D548D",
+        "AAAAAAAAAAAAAAAA18E3D8A54CC97BEB7DEFCB714F1F558D",
+        "AAAAAAAAAAAAAAAA18E398DCF4FBFA5EB9528D",
+        "AAAAAAAAAAAAAAAA18E3E8EFF6B67BBDEDDD0D",
+        "AAAAAAAAAAAAAAAA18E39894F67E7ABA7DB20D",
+        "AAAAAAAAAAAAAAAA18E348A54DCECA4965AD3B75DBE5E20D",
+        "AAAAAAAAAAAAAAAA18E398DCF569A6B9B9B58D",
+        "AAAAAAAAAAAAAAAA18E3586DF74A79AE955A0D",
+        "AAAAAAAAAAAAAAAA18E39814F7FA26557D570D",
+        "AAAAAAAAAAAAAAAA18E3E86CF2CECF5A25D78D",
+        "AAAAAAAAAAAAAAAA18E39894F7F76A77AFB40D",
+    };
 
     char *p = packet[0];
 
@@ -221,11 +294,15 @@ int main(void)
     }
 
     printf("SOP = %d\n", pd_packet.sop);
-    for (size_t i = 0; i < count / 2; i++)
+    printf("MESSAGE = ");
+    for (size_t i = 0; i < (count - 4) / 2; i++)
     {
         printf("%02X", pd_packet.message[i]);
     }
     puts("");
+
+    printf("crc=%08x\n", *((uint32_t *)&pd_packet.message[((count - 4) / 2) - 4]));
+    printf("crc residue shoud be 0xc704dd7b %s", crcWrap(pd_packet.crc) == 0xc704dd7b ? "OK!" : "NG!");
 }
 
 // プログラムの実行: Ctrl + F5 または [デバッグ] > [デバッグなしで開始] メニュー
